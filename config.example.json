@@ -1,0 +1,5 @@
+{
+    "teamwork": {
+        "auth": "<tw-auth cookie>"
+    }
+}
