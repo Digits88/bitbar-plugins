@@ -18,6 +18,7 @@ export PATH="/usr/local/bin:/usr/bin:$PATH"
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 TW_AUTH=$(jq -r '.teamwork.auth' $DIR/../config.json)
 PLUGIN_NAME=$(basename $0)
+ISO_8601_DATE_FMT="%Y-%m-%dT%H:%M:%SZ"
 
 get_latest_clockin() {
     curl -s -H "Cookie:tw-auth=$TW_AUTH" digitalcrew.teamwork.com/me/clockins.json | jq -r '.clockIns[0]'
@@ -51,6 +52,16 @@ pretty_timestamp() {
     esac
 }
 
+duration() {
+    START=$(date -jf $ISO_8601_DATE_FMT $1 "+%s")
+    END=$(date -jf $ISO_8601_DATE_FMT $2 "+%s")
+    DURATION=$(($END - $START))
+    HOURS=$(( $DURATION / 3600 ))
+    MINUTES=$(( ($DURATION - ($HOURS * 3600)) / 60 ))
+
+    echo "$HOURS hours and $MINUTES minutes"
+}
+
 capitalize() {
     echo $(tr '[:lower:]' '[:upper:]' <<< ${1:0:1})${1:1}
 }
@@ -59,15 +70,19 @@ run() {
     local LATEST_CLOCKIN=$(get_latest_clockin)
     local USER_ID=$(echo $LATEST_CLOCKIN | jq -r '.userId')
     local CLOCKOUT_TIME=$(echo $LATEST_CLOCKIN | jq -r '.clockOutDatetime')
+    local CLOCKIN_TIME=$(echo $LATEST_CLOCKIN | jq -r .clockInDatetime)
     local CLOCK_STATUS=$([[ -z "$CLOCKOUT_TIME" ]] && echo "in" || echo "out")
     local INVERTED_CLOCK_STATUS=$([[ ! -z "$CLOCKOUT_TIME" ]] && echo "in" || echo "out")
 
     echo ":clock1: $(capitalize $CLOCK_STATUS)"
     echo "---"
 
-    if [[ "$CLOCK_STATUS" -eq "in" ]]; then
-        local CLOCKIN_TIME=$(echo $LATEST_CLOCKIN | jq -r .clockInDatetime)
+    if [[ "$CLOCK_STATUS" == "in" ]]; then
         echo "Clocked in since $(pretty_timestamp $CLOCKIN_TIME)."
+    fi
+
+    if [[ "$CLOCK_STATUS" == "out" ]]; then
+        echo "Your last clock in was $(duration $CLOCKIN_TIME $CLOCKOUT_TIME)."
     fi
 
     echo "Clock $(capitalize $INVERTED_CLOCK_STATUS) | bash=\"$DIR/$PLUGIN_NAME\" param1=clock_$INVERTED_CLOCK_STATUS terminal=false refresh=true"
