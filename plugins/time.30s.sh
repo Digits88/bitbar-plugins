@@ -9,14 +9,6 @@
 #       A config.json in the parent directory (see config.example.json) and an tw-auth
 #       cookie value for `teamwork.auth` property in the config file.
 #
-#   Configuration:
-#
-#       MORNING_CLOCKIN_TIME is the time at which you should be clocked in. If not,
-#       it will show a warning in the taskbar. Use 24 hour clock notation: 09:00
-#
-            MORNING_CLOCKIN_TIME="09:00"
-#
-#
 #   Dependencies:
 #
 #       jq      - brew install jq
@@ -24,16 +16,21 @@
 #
 export PATH="/usr/local/bin:/usr/bin:$PATH"
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-TW_AUTH=$(jq -r '.teamwork.auth' $DIR/../config.json)
+CONFIG=$DIR/../config.json
+TW_KEY=$(jq -r '.teamwork.key' $CONFIG)
 PLUGIN_NAME=$(basename $0)
 ISO_8601_DATE_FMT="%Y-%m-%dT%H:%M:%SZ"
 
+request() {
+    curl -s -u "$TW_KEY:" $@
+}
+
 get_latest_clockin() {
-    curl -s -H "Cookie:tw-auth=$TW_AUTH" digitalcrew.teamwork.com/me/clockins.json | jq -r '.clockIns[0]'
+    request "digitalcrew.teamwork.com/me/clockins.json" | jq -r '.clockIns[0]'
 }
 
 update_clock() {
-    curl -s -X POST -H "Cookie: tw-auth=$TW_AUTH" "digitalcrew.teamwork.com/me/clock$1.json"
+    request -X POST "digitalcrew.teamwork.com/me/clock$1.json"
 }
 
 clock_in() {
@@ -66,6 +63,10 @@ diff_timestamps() {
     echo $(($END - $START))
 }
 
+time_since() {
+    diff_timestamps $1 $(date "+$ISO_8601_DATE_FMT")
+}
+
 pretty_duration() {
     DURATION=$(diff_timestamps $1 $2)
     HOURS=$(( $DURATION / 3600 ))
@@ -78,28 +79,38 @@ capitalize() {
     echo $(tr '[:lower:]' '[:upper:]' <<< ${1:0:1})${1:1}
 }
 
+time_to_timestamp() {
+    date "+%Y-%m-%dT$1:00Z"
+}
+
+invert_clock_status() {
+    [[ "$1" == "out" ]] && echo "in" || echo "out"
+}
+
 run() {
     local LATEST_CLOCKIN=$(get_latest_clockin)
     local USER_ID=$(echo $LATEST_CLOCKIN | jq -r '.userId')
     local CLOCKOUT_TIME=$(echo $LATEST_CLOCKIN | jq -r '.clockOutDatetime')
     local CLOCKIN_TIME=$(echo $LATEST_CLOCKIN | jq -r .clockInDatetime)
     local CLOCK_STATUS=$([[ -z "$CLOCKOUT_TIME" ]] && echo "in" || echo "out")
-    local INVERTED_CLOCK_STATUS=$([[ ! -z "$CLOCKOUT_TIME" ]] && echo "in" || echo "out")
+    local INVERTED_CLOCK_STATUS=$(invert_clock_status $CLOCK_STATUS)
+    local ICON="clock1"
 
-    local MORNING_TIME=$(date "+%Y-%m-%dT$MORNING_CLOCKIN_TIME:00Z")
-    local NOW=$(date "+$ISO_8601_DATE_FMT")
-    local MORNING_DIFF=$(diff_timestamps $MORNING_TIME $NOW)
-    local MINUTES_SINCE_MORNING=$(( MORNING_DIFF / 60 ))
+    # Display warning emojis if time after
+    for state in "in" "out"; do
+        local TARGET_TIME=$(time_to_timestamp $(jq -r ".clockManager.target.clock$state" $CONFIG))
+        local CLOCK_TIME=$([[ "$state" == "in" ]] && echo $CLOCKOUT_TIME || echo $CLOCKIN_TIME)
 
-    # Show warning emoji if not clocked in after MORNING_CLOCKIN_TIME. The warning is only
-    # shown for two hours after the MORNING_CLOCKIN_TIME.
-    if [[ "$CLOCK_STATUS" == "out" && $MINUTES_SINCE_MORNING > 0 && $MINUTES_SINCE_MORNING < 120 ]]; then
-        echo -n ":warning: "
-    else
-        echo -n ":clock1: "
-    fi
+        if [[ "$TARGET_TIME" != "null" && "$CLOCK_STATUS" == $(invert_clock_status $state) ]]; then
+            local TIME_SINCE_TARGET=$(( $(time_since $TARGET_TIME) / 60 ))
 
-    echo "$(capitalize $CLOCK_STATUS)"
+            if (( $TIME_SINCE_TARGET > 0 && $TIME_SINCE_TARGET < 60 )); then
+                local ICON="warning"
+            fi
+        fi
+    done
+
+    echo ":$ICON: $(capitalize $CLOCK_STATUS)"
     echo "---"
 
     if [[ "$CLOCK_STATUS" == "in" ]]; then
@@ -107,7 +118,7 @@ run() {
     fi
 
     if [[ "$CLOCK_STATUS" == "out" ]]; then
-        echo "Your last clock in was $(pretty_duration $CLOCKIN_TIME $CLOCKOUT_TIME)."
+        echo "Your last clock was $(pretty_duration $CLOCKIN_TIME $CLOCKOUT_TIME)."
     fi
 
     echo "Clock $(capitalize $INVERTED_CLOCK_STATUS) | bash=\"$DIR/$PLUGIN_NAME\" param1=clock_$INVERTED_CLOCK_STATUS terminal=false refresh=true"

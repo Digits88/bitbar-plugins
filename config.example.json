@@ -1,5 +1,12 @@
 {
     "teamwork": {
-        "auth": "<tw-auth cookie>"
+        "key": "<teamwork API key (Profile > Edit My Profile > API & Mobile)>"
+    },
+
+    "clockManager": {
+        "target": {
+            "clockin": "09:00",
+            "clockout": "18:00"
+        }
     }
 }
