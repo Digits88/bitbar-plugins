@@ -9,6 +9,14 @@
 #       A config.json in the parent directory (see config.example.json) and an tw-auth
 #       cookie value for `teamwork.auth` property in the config file.
 #
+#   Configuration:
+#
+#       MORNING_CLOCKIN_TIME is the time at which you should be clocked in. If not,
+#       it will show a warning in the taskbar. Use 24 hour clock notation: 09:00
+#
+            MORNING_CLOCKIN_TIME="09:00"
+#
+#
 #   Dependencies:
 #
 #       jq      - brew install jq
@@ -52,10 +60,14 @@ pretty_timestamp() {
     esac
 }
 
-duration() {
+diff_timestamps() {
     START=$(date -jf $ISO_8601_DATE_FMT $1 "+%s")
     END=$(date -jf $ISO_8601_DATE_FMT $2 "+%s")
-    DURATION=$(($END - $START))
+    echo $(($END - $START))
+}
+
+pretty_duration() {
+    DURATION=$(diff_timestamps $1 $2)
     HOURS=$(( $DURATION / 3600 ))
     MINUTES=$(( ($DURATION - ($HOURS * 3600)) / 60 ))
 
@@ -74,7 +86,20 @@ run() {
     local CLOCK_STATUS=$([[ -z "$CLOCKOUT_TIME" ]] && echo "in" || echo "out")
     local INVERTED_CLOCK_STATUS=$([[ ! -z "$CLOCKOUT_TIME" ]] && echo "in" || echo "out")
 
-    echo ":clock1: $(capitalize $CLOCK_STATUS)"
+    local MORNING_TIME=$(date "+%Y-%m-%dT$MORNING_CLOCKIN_TIME:00Z")
+    local NOW=$(date "+$ISO_8601_DATE_FMT")
+    local MORNING_DIFF=$(diff_timestamps $MORNING_TIME $NOW)
+    local MINUTES_SINCE_MORNING=$(( MORNING_DIFF / 60 ))
+
+    # Show warning emoji if not clocked in after MORNING_CLOCKIN_TIME. The warning is only
+    # shown for two hours after the MORNING_CLOCKIN_TIME.
+    if [[ "$CLOCK_STATUS" == "out" && $MINUTES_SINCE_MORNING > 0 && $MINUTES_SINCE_MORNING < 120 ]]; then
+        echo -n ":warning: "
+    else
+        echo -n ":clock1: "
+    fi
+
+    echo "$(capitalize $CLOCK_STATUS)"
     echo "---"
 
     if [[ "$CLOCK_STATUS" == "in" ]]; then
@@ -82,7 +107,7 @@ run() {
     fi
 
     if [[ "$CLOCK_STATUS" == "out" ]]; then
-        echo "Your last clock in was $(duration $CLOCKIN_TIME $CLOCKOUT_TIME)."
+        echo "Your last clock in was $(pretty_duration $CLOCKIN_TIME $CLOCKOUT_TIME)."
     fi
 
     echo "Clock $(capitalize $INVERTED_CLOCK_STATUS) | bash=\"$DIR/$PLUGIN_NAME\" param1=clock_$INVERTED_CLOCK_STATUS terminal=false refresh=true"
